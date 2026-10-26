@@ -1,8 +1,117 @@
+from io import BytesIO
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from matplotlib.backends.backend_pdf import PdfPages
 import ollama
+
+
+def create_pdf_report(
+    df,
+    histogram_column,
+    category_column,
+    numeric_column,
+    pie_column,
+    box_column,
+    x_column,
+    y_column
+):
+    report = BytesIO()
+
+    with PdfPages(report) as pdf:
+        fig, ax = plt.subplots(figsize=(8.27, 11.69))
+        ax.axis("off")
+
+        report_text = (
+            "AI Data Analysis Report\n\n"
+            f"Rows: {df.shape[0]}\n"
+            f"Columns: {df.shape[1]}\n"
+            f"Missing values: {df.isnull().sum().sum()}\n"
+            f"Duplicate rows: {df.duplicated().sum()}\n\n"
+            "Column names:\n"
+            + "\n".join(str(column) for column in df.columns)
+        )
+        ax.text(
+            0.05,
+            0.95,
+            report_text,
+            fontsize=12,
+            family="monospace",
+            va="top"
+        )
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+        if histogram_column is not None:
+            fig, ax = plt.subplots(figsize=(8.27, 5.85))
+            ax.hist(df[histogram_column].dropna(), bins=20, edgecolor="black")
+            ax.set_title(f"Histogram: {histogram_column}")
+            ax.set_xlabel(histogram_column)
+            ax.set_ylabel("Frequency")
+            pdf.savefig(fig, bbox_inches="tight")
+            plt.close(fig)
+
+        if category_column is not None and numeric_column is not None:
+            chart_data = (
+                df.groupby(category_column)[numeric_column]
+                .sum()
+                .sort_values(ascending=False)
+                .head(20)
+            )
+            fig, ax = plt.subplots(figsize=(8.27, 5.85))
+            chart_data.plot(kind="bar", ax=ax)
+            ax.set_title(f"{numeric_column} by {category_column}")
+            ax.set_xlabel(category_column)
+            ax.set_ylabel(numeric_column)
+            fig.tight_layout()
+            pdf.savefig(fig, bbox_inches="tight")
+            plt.close(fig)
+
+        if pie_column is not None:
+            pie_data = (
+                df[pie_column]
+                .fillna("Missing")
+                .value_counts()
+                .head(10)
+            )
+            fig, ax = plt.subplots(figsize=(8.27, 5.85))
+            ax.pie(pie_data.values, labels=pie_data.index, autopct="%1.1f%%")
+            ax.set_title(f"Category Distribution: {pie_column}")
+            pdf.savefig(fig, bbox_inches="tight")
+            plt.close(fig)
+
+        numeric_columns = df.select_dtypes(include="number").columns.tolist()
+        if len(numeric_columns) >= 2:
+            fig, ax = plt.subplots(figsize=(8.27, 5.85))
+            sns.heatmap(
+                df[numeric_columns].corr(),
+                annot=True,
+                cmap="coolwarm",
+                fmt=".2f",
+                ax=ax
+            )
+            ax.set_title("Correlation Heatmap")
+            pdf.savefig(fig, bbox_inches="tight")
+            plt.close(fig)
+
+        if box_column is not None:
+            fig, ax = plt.subplots(figsize=(8.27, 5.85))
+            sns.boxplot(x=df[box_column], ax=ax)
+            ax.set_title(f"Boxplot: {box_column}")
+            pdf.savefig(fig, bbox_inches="tight")
+            plt.close(fig)
+
+        if x_column is not None and y_column is not None:
+            fig, ax = plt.subplots(figsize=(8.27, 5.85))
+            sns.scatterplot(data=df, x=x_column, y=y_column, ax=ax)
+            ax.set_title(f"Scatter Plot: {x_column} vs {y_column}")
+            pdf.savefig(fig, bbox_inches="tight")
+            plt.close(fig)
+
+    report.seek(0)
+    return report.getvalue()
+
 
 st.title("AI Data Analysis Assistant")
 
@@ -230,13 +339,37 @@ if uploaded_file is not None:
         use_container_width=True
     )
 
-    st.subheader("Ask AI About Dataset")
+    csv_column, pdf_column = st.columns(2)
+    csv_column.download_button(
+        "Download CSV",
+        data=df.to_csv(index=False).encode("utf-8"),
+        file_name="data.csv",
+        mime="text/csv"
+    )
+    pdf_column.download_button(
+        "Download PDF Report",
+        data=create_pdf_report(
+            df,
+            histogram_column if numeric_columns else None,
+            category_column if numeric_columns and categorical_columns else None,
+            numeric_column if numeric_columns and categorical_columns else None,
+            pie_column if categorical_columns else None,
+            box_column if numeric_columns else None,
+            x_column if len(numeric_columns) >= 2 else None,
+            y_column if len(numeric_columns) >= 2 else None
+        ),
+        file_name="data_analysis_report.pdf",
+        mime="application/pdf"
+    )
 
+    st.subheader("Ask AI About Dataset")
     question = st.text_input(
         "Enter your question"
     )
 
-    if st.button("Ask AI") and question:
+    ask_clicked = st.button("Ask AI")
+
+    if ask_clicked and question:
 
         dataset_info = f"""
 Columns:
